@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.models import AssetType, Role
+from app.models import AssetType, BatchStatus, Role
 
 
 class SignupRequest(BaseModel):
@@ -70,3 +70,19 @@ class TagOut(BaseModel):
     asset_id: int
     name: str
     unit: str
+
+
+class BatchCreate(BaseModel):
+    asset_id: int
+    name: str = Field(min_length=1, max_length=200)
+
+
+class BatchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    asset_id: int
+    name: str
+    status: BatchStatus
+    started_at: datetime
+    ended_at: datetime | None

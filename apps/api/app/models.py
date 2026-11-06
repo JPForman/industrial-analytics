@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -97,6 +97,16 @@ class Batch(Base):
     """A production run on one asset, defined by a time window."""
 
     __tablename__ = "batches"
+    __table_args__ = (
+        # Invariant enforced by the database: at most one running batch per asset.
+        Index(
+            "uq_batches_one_running_per_asset",
+            "asset_id",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status = 'running'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), index=True)
