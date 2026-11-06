@@ -1,9 +1,14 @@
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.db import get_db
+from app.main import app
 from app.models import Role
+from tests.conftest import TEST_DATABASE_URL
 
 Headers = Callable[[Role], Awaitable[dict[str, str]]]
 
@@ -126,3 +131,43 @@ async def test_list_filters_and_newest_first(client: AsyncClient, auth_headers: 
     mine = (await client.get(f"/batches?asset_id={a1}", headers=eng)).json()
     assert {b["name"] for b in mine["items"]} == {"old", "newer"}
     assert (await client.get("/batches?status=bogus", headers=eng)).status_code == 422
+
+
+@pytest.fixture
+async def concurrent_client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    """Client whose every request gets its OWN DB session, so requests can truly interleave.
+
+    (The normal `client` fixture shares one session, which hides races.) Needs real Postgres.
+    """
+    engine = create_async_engine(TEST_DATABASE_URL)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def per_request() -> AsyncIterator[AsyncSession]:
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = per_request
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+    app.dependency_overrides.clear()
+    await engine.dispose()
+
+
+@pytest.mark.skipif(
+    TEST_DATABASE_URL.startswith("sqlite"), reason="needs real Postgres for true concurrency"
+)
+async def test_simultaneous_finish_has_exactly_one_winner(
+    concurrent_client: AsyncClient, auth_headers: Headers
+) -> None:
+    eng = await auth_headers(Role.engineer)
+    for n in range(10):  # a race may not show on every attempt, so use a fresh batch each round
+        asset_id = await make_asset(concurrent_client, eng, n=n)
+        batch_id = await start(concurrent_client, eng, asset_id)
+        done, aborted = await asyncio.gather(
+            concurrent_client.post(f"/batches/{batch_id}/complete", headers=eng),
+            concurrent_client.post(f"/batches/{batch_id}/abort", headers=eng),
+        )
+        assert sorted([done.status_code, aborted.status_code]) == [200, 409], f"round {n}"
+        winner = done if done.status_code == 200 else aborted
+        final = (await concurrent_client.get(f"/batches/{batch_id}", headers=eng)).json()
+        assert final["status"] == winner.json()["status"]  # what the winner was told is true

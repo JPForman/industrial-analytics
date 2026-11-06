@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.deps import DbSession, get_current_user, require_role
 from app.models import Asset, Batch, BatchStatus, Role
@@ -59,16 +59,27 @@ async def get_batch(batch_id: int, db: DbSession) -> Batch:
 
 
 async def _finish(db: DbSession, batch_id: int, new_status: BatchStatus) -> Batch:
-    """State machine: the only legal transitions are running -> completed | aborted."""
-    batch = await get_or_404(db, Batch, batch_id)
-    if batch.status is not BatchStatus.running:
+    """State machine: the only legal transitions are running -> completed | aborted.
+
+    The check and the write are ONE atomic statement (`UPDATE ... WHERE status = 'running'`),
+    so two simultaneous requests cannot both succeed: the loser updates zero rows.
+    """
+    result = await db.execute(
+        update(Batch)
+        .where(Batch.id == batch_id, Batch.status == BatchStatus.running)
+        .values(status=new_status, ended_at=datetime.now(UTC))
+    )
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        # Nothing changed: either it doesn't exist, or it was already finished.
+        batch = await get_or_404(db, Batch, batch_id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Batch is already {batch.status.value}; cannot change it"
         )
-    batch.status = new_status
-    batch.ended_at = datetime.now(UTC)
     await db.commit()
-    return batch
+    # populate_existing: bypass the session's cached copy, which still shows the old status.
+    finished = await db.get(Batch, batch_id, populate_existing=True)
+    assert finished is not None
+    return finished
 
 
 @router.post("/{batch_id}/complete", response_model=BatchOut, dependencies=[EngineerUp])
