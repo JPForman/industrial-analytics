@@ -2,12 +2,13 @@ from fastapi import FastAPI, HTTPException, status
 from sqlalchemy import text
 
 from app.deps import DbSession
-from app.routers import assets, auth, batches
+from app.routers import assets, auth, batches, readings
 
 app = FastAPI(title="Industrial Analytics API", version="0.1.0")
 app.include_router(auth.router)
 app.include_router(assets.router)
 app.include_router(batches.router)
+app.include_router(readings.router)
 
 
 @app.get("/health", tags=["ops"])
