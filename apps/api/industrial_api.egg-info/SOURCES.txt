@@ -1,0 +1,9 @@
+pyproject.toml
+app/__init__.py
+app/core/__init__.py
+app/routers/__init__.py
+industrial_api.egg-info/PKG-INFO
+industrial_api.egg-info/SOURCES.txt
+industrial_api.egg-info/dependency_links.txt
+industrial_api.egg-info/requires.txt
+industrial_api.egg-info/top_level.txt

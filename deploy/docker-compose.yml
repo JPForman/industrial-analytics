@@ -1,0 +1,20 @@
+# Local development stack. More services (mosquitto, ingestor, simulator, web) arrive in later phases.
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: industrial
+      POSTGRES_PASSWORD: industrial
+      POSTGRES_DB: industrial
+    ports:
+      - "5432:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U industrial -d industrial"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  dbdata:
