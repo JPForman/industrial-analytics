@@ -24,6 +24,18 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 target_metadata = Base.metadata
+
+# Indexes TimescaleDB creates itself (e.g. via create_hypertable); not in our models,
+# so autogenerate would otherwise propose dropping them.
+TIMESCALE_MANAGED_INDEXES = {"readings_ts_idx"}
+
+
+def include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object
+) -> bool:
+    return not (type_ == "index" and name in TIMESCALE_MANAGED_INDEXES)
+
+
 # One source of truth for the URL; '%' must be doubled for configparser.
 config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
@@ -49,6 +61,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -58,7 +71,9 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, include_object=include_object
+    )
 
     with context.begin_transaction():
         context.run_migrations()
