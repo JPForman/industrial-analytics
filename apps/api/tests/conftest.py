@@ -1,5 +1,5 @@
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 # Must be set before importing the app: settings are read on first use.
 os.environ.setdefault("JWT_SECRET", "test-secret-not-for-production-0123456789")
@@ -9,8 +9,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.core.security import create_access_token
 from app.db import Base, get_db
 from app.main import app
+from app.models import Role, User
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite://")
 
@@ -38,3 +40,16 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def auth_headers(db_session: AsyncSession) -> Callable[[Role], Awaitable[dict[str, str]]]:
+    """Factory: `await auth_headers(Role.engineer)` -> headers for a fresh user of that role."""
+
+    async def make(role: Role) -> dict[str, str]:
+        user = User(email=f"{role.value}@example.com", password_hash="x", role=role)
+        db_session.add(user)
+        await db_session.commit()
+        return {"Authorization": f"Bearer {create_access_token(user.id)}"}
+
+    return make
