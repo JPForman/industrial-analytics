@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models import AssetType, BatchStatus, Role
 
@@ -86,3 +86,36 @@ class BatchOut(BaseModel):
     status: BatchStatus
     started_at: datetime
     ended_at: datetime | None
+
+
+class ReadingIn(BaseModel):
+    tag_id: int
+    ts: AwareDatetime  # timezone required: a naive timestamp is ambiguous
+    value: float = Field(allow_inf_nan=False)  # NaN/Infinity would poison aggregates
+
+
+class ReadingsIngest(BaseModel):
+    readings: list[ReadingIn] = Field(min_length=1, max_length=1000)
+
+
+class IngestResult(BaseModel):
+    received: int
+    inserted: int  # received - inserted = duplicates that were safely ignored
+
+
+class ReadingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    ts: datetime
+    value: float
+
+    @field_validator("ts")
+    @classmethod
+    def _assume_utc(cls, v: datetime) -> datetime:
+        # We store UTC. Some drivers (SQLite) hand back naive datetimes; Postgres is aware.
+        return v if v.tzinfo else v.replace(tzinfo=UTC)
+
+
+class ReadingsPage(BaseModel):
+    items: list[ReadingOut]
+    next_cursor: datetime | None  # pass as ?cursor= to get the next page; null = no more
