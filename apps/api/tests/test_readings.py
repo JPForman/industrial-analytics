@@ -5,6 +5,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.models import Role
+from tests.conftest import TEST_DATABASE_URL
 
 Headers = Callable[[Role], Awaitable[dict[str, str]]]
 
@@ -128,3 +129,76 @@ async def test_query_requires_bounded_valid_range_and_known_tag(
     assert (await client.get("/tags/999/readings", params=ok, headers=eng)).status_code == 404
     viewer = await auth_headers(Role.viewer)
     assert (await client.get(url, params=ok, headers=viewer)).status_code == 200
+
+
+needs_timescale = pytest.mark.skipif(
+    TEST_DATABASE_URL.startswith("sqlite"), reason="time_bucket needs Postgres + TimescaleDB"
+)
+
+
+async def post_points(
+    client: AsyncClient, headers: dict[str, str], tag_id: int, values: dict[int, float]
+) -> None:
+    body = {"readings": [{"tag_id": tag_id, "ts": iso(s), "value": v} for s, v in values.items()]}
+    assert (await client.post("/readings", json=body, headers=headers)).status_code == 200
+
+
+@needs_timescale
+async def test_aggregate_buckets_have_exact_stats(
+    client: AsyncClient, auth_headers: Headers
+) -> None:
+    eng = await auth_headers(Role.engineer)
+    tag_id = await make_tag(client, eng)
+    await post_points(client, eng, tag_id, {i: float(i) for i in range(120)})  # 2 minutes @1Hz
+    resp = await client.get(
+        f"/tags/{tag_id}/readings/aggregate",
+        params={"start": iso(0), "end": iso(120), "bucket": "1m"},
+        headers=eng,
+    )
+    first, second = resp.json()
+    assert first["bucket"].startswith("2026-01-01T00:00:00")
+    assert (first["count"], first["min"], first["max"], first["avg"]) == (60, 0.0, 59.0, 29.5)
+    assert (second["count"], second["min"], second["max"], second["avg"]) == (60, 60.0, 119.0, 89.5)
+
+
+@needs_timescale
+async def test_aggregate_max_reveals_spike_the_average_hides(
+    client: AsyncClient, auth_headers: Headers
+) -> None:
+    eng = await auth_headers(Role.engineer)
+    tag_id = await make_tag(client, eng)
+    values = {i: 100.0 for i in range(60)} | {30: 5000.0}  # one spike inside a flat minute
+    await post_points(client, eng, tag_id, values)
+    params = {"start": iso(0), "end": iso(60), "bucket": "1m"}
+    (only,) = (
+        await client.get(f"/tags/{tag_id}/readings/aggregate", params=params, headers=eng)
+    ).json()
+    assert only["max"] == 5000.0
+    assert only["avg"] < 200  # average barely moves
+
+
+@needs_timescale
+async def test_aggregate_omits_empty_buckets(client: AsyncClient, auth_headers: Headers) -> None:
+    eng = await auth_headers(Role.engineer)
+    tag_id = await make_tag(client, eng)
+    await post_points(client, eng, tag_id, {0: 1.0, 300: 2.0})  # 4-minute hole in between
+    params = {"start": iso(0), "end": iso(360), "bucket": "1m"}
+    buckets = (
+        await client.get(f"/tags/{tag_id}/readings/aggregate", params=params, headers=eng)
+    ).json()
+    assert len(buckets) == 2  # gap stays a gap: no zero-filled rows
+
+
+async def test_aggregate_input_validation(client: AsyncClient, auth_headers: Headers) -> None:
+    eng = await auth_headers(Role.engineer)
+    tag_id = await make_tag(client, eng)
+    url = f"/tags/{tag_id}/readings/aggregate"
+    base = {"start": iso(0), "end": iso(60)}
+    assert (await client.get(url, params=base | {"bucket": "7s"}, headers=eng)).status_code == 422
+    backwards = {"start": iso(60), "end": iso(0)}
+    assert (await client.get(url, params=backwards, headers=eng)).status_code == 422
+    # 10 days at 10s buckets = 86,400 buckets: over the cap
+    huge = {"start": iso(0), "end": iso(10 * 86400), "bucket": "10s"}
+    resp = await client.get(url, params=huge, headers=eng)
+    assert resp.status_code == 422 and "larger bucket" in resp.json()["detail"]
+    assert (await client.get(url, headers=eng)).status_code == 422  # start/end required
