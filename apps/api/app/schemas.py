@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -119,3 +120,41 @@ class ReadingOut(BaseModel):
 class ReadingsPage(BaseModel):
     items: list[ReadingOut]
     next_cursor: datetime | None  # pass as ?cursor= to get the next page; null = no more
+
+
+class BucketSize(StrEnum):
+    """Allowlist of bucket widths: bounded input, predictable cost."""
+
+    s10 = "10s"
+    m1 = "1m"
+    m5 = "5m"
+    m15 = "15m"
+    h1 = "1h"
+    d1 = "1d"
+
+    @property
+    def delta(self) -> timedelta:
+        return _BUCKET_DELTAS[self]
+
+
+_BUCKET_DELTAS = {
+    BucketSize.s10: timedelta(seconds=10),
+    BucketSize.m1: timedelta(minutes=1),
+    BucketSize.m5: timedelta(minutes=5),
+    BucketSize.m15: timedelta(minutes=15),
+    BucketSize.h1: timedelta(hours=1),
+    BucketSize.d1: timedelta(days=1),
+}
+
+
+class AggregateBucket(BaseModel):
+    bucket: datetime  # start of the bucket
+    avg: float
+    min: float
+    max: float
+    count: int
+
+    @field_validator("bucket")
+    @classmethod
+    def _assume_utc(cls, v: datetime) -> datetime:
+        return v if v.tzinfo else v.replace(tzinfo=UTC)

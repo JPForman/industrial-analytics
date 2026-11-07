@@ -24,7 +24,7 @@ React (Vite/TS) <---------- REST + WebSocket ---------- FastAPI api
 
 Status key: **[exists]** in the repo now, **[planned]** not built yet. Update this as phases land.
 
-- `apps/api/` **[exists]**: FastAPI, SQLAlchemy 2.0 async, Alembic, pytest. Auth + RBAC (`app/deps.py`: `get_current_user`, `require_role`), domain models, and the assets/tags router (`app/routers/assets.py`, shared helpers in `routers/common.py`: `Page`, `PageParams`, `commit_or_409`, `get_or_404`) and the batches router (`app/routers/batches.py`: start / complete / abort state machine) and the readings router (`app/routers/readings.py`: idempotent bulk ingest via ON CONFLICT DO NOTHING; keyset-paginated range query with required start/end) are done; time_bucket aggregates, alarms, user admin, logging are next.
+- `apps/api/` **[exists]**: FastAPI, SQLAlchemy 2.0 async, Alembic, pytest. Auth + RBAC (`app/deps.py`: `get_current_user`, `require_role`), domain models, and the assets/tags router (`app/routers/assets.py`, shared helpers in `routers/common.py`: `Page`, `PageParams`, `commit_or_409`, `get_or_404`) and the batches router (`app/routers/batches.py`: start / complete / abort state machine) and the readings router (`app/routers/readings.py`: idempotent bulk ingest via ON CONFLICT DO NOTHING; keyset-paginated range query with required start/end) and the aggregate endpoint (`GET /tags/{id}/readings/aggregate`: TimescaleDB `time_bucket`, allowlisted bucket sizes, 2000-bucket cap, gaps left as gaps) are done; alarms, user admin, logging are next.
 - `apps/ingestor/` **[planned]**: async MQTT consumer (aiomqtt + Sparkplug protobuf), batch inserts, alarm evaluation.
 - `apps/simulator/` **[planned]**: fake machines publishing Sparkplug B.
 - `apps/web/` **[planned]**: React + TypeScript + Vite, Vitest + Testing Library, Playwright smoke test.
@@ -67,6 +67,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://... .venv/bin/pytest              # again
 ```
 
 Gotchas:
+- Tests for TimescaleDB-only SQL (`time_bucket`) are marked skip-on-SQLite (`needs_timescale`); run them with `TEST_DATABASE_URL` pointing at the Postgres test DB (it inherits the extension from template1).
 - Test fixtures build tables with `create_all`, so `readings` is a plain table in local tests (a hypertable only in CI's first test, after migrations). Verify hypertable behaviour against the migrated dev DB.
 - Timestamps are UTC and must be timezone-aware on input (`AwareDatetime`); SQLite drops tz info, so `ReadingOut` re-attaches UTC.
 - `migrations/env.py` has an `include_object` filter so autogenerate ignores TimescaleDB-managed indexes (`readings_ts_idx`); add new Timescale-created objects to `TIMESCALE_MANAGED_INDEXES` or autogenerate will propose dropping them.

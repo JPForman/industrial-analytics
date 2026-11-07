@@ -1,16 +1,26 @@
+import math
 from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import AwareDatetime
-from sqlalchemy import select
+from sqlalchemy import Interval, func, literal, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.deps import DbSession, get_current_user, require_role
 from app.models import Reading, Role, Tag
 from app.routers.common import get_or_404
-from app.schemas import IngestResult, ReadingOut, ReadingsIngest, ReadingsPage
+from app.schemas import (
+    AggregateBucket,
+    BucketSize,
+    IngestResult,
+    ReadingOut,
+    ReadingsIngest,
+    ReadingsPage,
+)
+
+MAX_BUCKETS = 2000
 
 router = APIRouter(tags=["readings"], dependencies=[Depends(get_current_user)])
 
@@ -68,3 +78,41 @@ async def list_readings(
     items = [ReadingOut.model_validate(r) for r in rows]
     next_cursor: datetime | None = items[-1].ts if len(items) == limit else None
     return ReadingsPage(items=items, next_cursor=next_cursor)
+
+
+@router.get("/tags/{tag_id}/readings/aggregate", response_model=list[AggregateBucket])
+async def aggregate_readings(
+    tag_id: int,
+    db: DbSession,
+    start: Annotated[AwareDatetime, Query(description="Inclusive lower bound")],
+    end: Annotated[AwareDatetime, Query(description="Exclusive upper bound")],
+    bucket: Annotated[BucketSize, Query()] = BucketSize.m1,
+) -> list[AggregateBucket]:
+    """Downsampled series for charts: avg/min/max/count per time bucket (TimescaleDB).
+
+    Buckets with no data are omitted: a gap means "no data", which is not the same as zero.
+    """
+    if end <= start:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "end must be after start")
+    expected = math.ceil((end - start) / bucket.delta)
+    if expected > MAX_BUCKETS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Range would return {expected} buckets (max {MAX_BUCKETS}); use a larger bucket",
+        )
+    await get_or_404(db, Tag, tag_id)
+
+    bucket_start = func.time_bucket(literal(bucket.delta, Interval()), Reading.ts).label("bucket")
+    rows = await db.execute(
+        select(
+            bucket_start,
+            func.avg(Reading.value).label("avg"),
+            func.min(Reading.value).label("min"),
+            func.max(Reading.value).label("max"),
+            func.count().label("count"),
+        )
+        .where(Reading.tag_id == tag_id, Reading.ts >= start, Reading.ts < end)
+        .group_by(bucket_start)
+        .order_by(bucket_start)
+    )
+    return [AggregateBucket.model_validate(r._asdict()) for r in rows]
