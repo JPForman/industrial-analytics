@@ -25,24 +25,29 @@ React (Vite/TS) <---------- REST + WebSocket ---------- FastAPI api
 Status key: **[exists]** in the repo now, **[planned]** not built yet. Update this as phases land.
 
 - `apps/api/` **[exists]**: FastAPI, SQLAlchemy 2.0 async, Alembic, pytest. Auth + RBAC (`app/deps.py`: `get_current_user`, `require_role`), domain models, and the assets/tags router (`app/routers/assets.py`, shared helpers in `routers/common.py`: `Page`, `PageParams`, `commit_or_409`, `get_or_404`) and the batches router (`app/routers/batches.py`: start / complete / abort state machine) and the readings router (`app/routers/readings.py`: idempotent bulk ingest via ON CONFLICT DO NOTHING; keyset-paginated range query with required start/end) and the aggregate endpoint (`GET /tags/{id}/readings/aggregate`: TimescaleDB `time_bucket`, allowlisted bucket sizes, 2000-bucket cap, gaps left as gaps) are done; alarms, user admin, logging are next.
-- `apps/ingestor/` **[planned]**: async MQTT consumer (aiomqtt + Sparkplug protobuf), batch inserts, alarm evaluation.
-- `apps/simulator/` **[planned]**: fake machines publishing Sparkplug B.
-- `apps/web/` **[planned]**: React + TypeScript + Vite, Vitest + Testing Library, Playwright smoke test.
-- `deploy/` **[exists]**: `docker-compose.yml` (TimescaleDB only so far); Kubernetes manifests planned.
-- `docs/` **[exists]**: architecture notes; `docs/adr/` holds decision records.
-- `.github/workflows/` **[exists]**: `api-ci.yml` (ruff, mypy, migration round trip, pytest against a TimescaleDB service container, path-filtered). Web CI and GHCR image publishing planned.
+- `packages/sparkplug/` **[exists]**: shared Sparkplug B library. `sparkplug_b.proto` is a subset of the official schema (same field numbers); `sparkplug_b_pb2.py/.pyi` are generated and committed. Regenerate with `docker run --rm -v "$PWD/sparkplug:/out" python:3.13-slim sh -c "pip install -q grpcio-tools && python -m grpc_tools.protoc -I/out --python_out=/out --pyi_out=/out /out/sparkplug_b.proto"` and keep the `protobuf>=` pin at or above the generator version. API: `Topic.parse/str`, `encode`, `decode`, `Metric`, `MessageType`, `DataType`.
+- `apps/simulator/` **[exists]**: edge node `edge1` (group `BuffaloWorks`) with devices `laser1`, `press1`, `printer1`. `edge_node.py` builds messages (pure, tested); `main.py` does MQTT I/O (aiomqtt): NBIRTH/DBIRTH, DDATA every `INTERVAL_S`, NDEATH as Last Will, rebirth on `NCMD Node Control/Rebirth`, reconnect with backoff and bdSeq bump. Conventions: aliases are `(device_index+1)*100 + metric_index`; DBIRTH carries `Properties/AssetType` and `Properties/Unit/<metric>` string metrics. Env: `MQTT_HOST`, `MQTT_PORT`, `INTERVAL_S`, `SPIKE_PROB`, `SEED`, `GROUP_ID`, `EDGE_NODE_ID`.
+- `apps/ingestor/` **[planned, next]**: subscribes `spBv1.0/#`, learns aliases from DBIRTH (upserts Asset/Tag), buffers DDATA into bulk `ON CONFLICT DO NOTHING` inserts, detects seq gaps and requests rebirth, evaluates alarm rules, republishes normalized JSON for the live feed.
+- `apps/web/` **[planned]**: React + TypeScript + Vite, Vitest + Testing Library.
+- `deploy/` **[exists]**: `docker-compose.yml` with `db` (TimescaleDB) and `mqtt` (Mosquitto, config in `deploy/mosquitto/`, anonymous on 1883 for dev only). App services to be added.
+- `docs/` **[exists]**: `docs/adr/` holds decision records (0001 monorepo, 0002 TimescaleDB, 0003 Sparkplug B).
+- `.github/workflows/` **[exists]**: `api-ci.yml` (ruff, mypy, migration round trip, pytest against a TimescaleDB service container) and `python-libs-ci.yml` (matrix over `packages/sparkplug` and `apps/simulator`). Both path-filtered. Web CI and image builds planned.
 - `.gitignore`, `.editorconfig`, `README.md` **[exists]**.
 
-## Roadmap (phases)
+## Roadmap
 
-1. Reset and repo bootstrap: git, private GitHub repo `industrial-analytics`, first CI. **[done; pre-commit and branch protection still open]**
-2. Backend core **[in progress: scaffold, auth, Alembic, domain models/migration done; routers, pagination, logging pending]**: settings, async DB, Alembic, auth + RBAC (`get_current_user`, `require_role`), asset/tag/reading/alarm/batch routers, tests.
-3. Messaging: Mosquitto, Sparkplug B simulator, ingestor, WebSocket live feed.
-4. Frontend: login, role-gated routes, asset dashboard, live charts, alarms, batch history, tests.
-5. Containers and CI/CD: multi-stage non-root Dockerfiles, compose, GitHub Actions, GHCR, Trivy, Dependabot, k8s manifests.
-6. Interview polish: README with diagram, ADRs, seed data, demo script, trade-off talking points.
+**Deadline: the interview is Monday 2026-11-09.** On Saturday 2026-11-07 the user chose "end-to-end demo first" with lighter teaching (key concepts, a walkthrough, one quiz per phase). Remaining work, one PR each, in order:
 
-The full plan lives at `~/.claude/plans/the-purpose-of-this-structured-pumpkin.md`.
+1. Mosquitto + Sparkplug B library + simulator **[done in PR 7]**
+2. Ingestor: MQTT to DB, alias map from births, seq-gap rebirth, alarm evaluation
+3. WebSocket live feed in the API
+4. React/TS dashboard: login, assets, live chart, aggregates, alarms
+5. Dockerfiles for every service, full-stack `docker compose up`, CI builds images
+6. README with architecture diagram, plus an interview talking-points doc
+
+Deliberately deferred (explain these, don't build them before Monday): alarm-rule CRUD UI, admin user-role endpoint, structured logging, Kubernetes manifests, GHCR publishing, pre-commit, branch protection (needs GitHub Pro on a private repo).
+
+Already done: repo bootstrap; API scaffold, auth/RBAC, Alembic, domain models (hypertable), assets/tags, batches (with race-safe finish), readings ingest + keyset query, `time_bucket` aggregates.
 
 ## Domain model (implemented in `apps/api/app/models.py`)
 

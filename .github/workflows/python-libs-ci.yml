@@ -1,0 +1,40 @@
+name: Python libs CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["packages/sparkplug/**", "apps/simulator/**", ".github/workflows/python-libs-ci.yml"]
+  pull_request:
+    paths: ["packages/sparkplug/**", "apps/simulator/**", ".github/workflows/python-libs-ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-libs-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [packages/sparkplug, apps/simulator]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.15"
+          allow-prereleases: true
+      - name: Install (shared sparkplug package first; compat mode so mypy can see it)
+        run: |
+          pip install -e "$GITHUB_WORKSPACE/packages/sparkplug" --config-settings editable_mode=compat
+          pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy $( [ -d simulator ] && echo simulator || echo sparkplug ) tests
+      - run: pytest -q
