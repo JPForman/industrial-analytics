@@ -1,0 +1,41 @@
+[project]
+name = "industrial-ingestor"
+version = "0.1.0"
+description = "Consumes Sparkplug B from MQTT, writes readings to TimescaleDB, evaluates alarms"
+requires-python = ">=3.14"
+# Monorepo siblings, installed alongside: packages/sparkplug and apps/api (for the shared models).
+dependencies = [
+  "aiomqtt>=2.3",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "asyncpg>=0.30",
+  "sparkplug",
+  "industrial-api",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13"]
+
+[project.scripts]
+industrial-ingestor = "ingestor.main:run"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ingestor*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]

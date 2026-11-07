@@ -1,0 +1,13 @@
+pyproject.toml
+industrial_ingestor.egg-info/PKG-INFO
+industrial_ingestor.egg-info/SOURCES.txt
+industrial_ingestor.egg-info/dependency_links.txt
+industrial_ingestor.egg-info/entry_points.txt
+industrial_ingestor.egg-info/requires.txt
+industrial_ingestor.egg-info/top_level.txt
+ingestor/__init__.py
+ingestor/alarms.py
+ingestor/main.py
+ingestor/registry.py
+ingestor/state.py
+ingestor/writer.py

@@ -27,11 +27,11 @@ Status key: **[exists]** in the repo now, **[planned]** not built yet. Update th
 - `apps/api/` **[exists]**: FastAPI, SQLAlchemy 2.0 async, Alembic, pytest. Auth + RBAC (`app/deps.py`: `get_current_user`, `require_role`), domain models, and the assets/tags router (`app/routers/assets.py`, shared helpers in `routers/common.py`: `Page`, `PageParams`, `commit_or_409`, `get_or_404`) and the batches router (`app/routers/batches.py`: start / complete / abort state machine) and the readings router (`app/routers/readings.py`: idempotent bulk ingest via ON CONFLICT DO NOTHING; keyset-paginated range query with required start/end) and the aggregate endpoint (`GET /tags/{id}/readings/aggregate`: TimescaleDB `time_bucket`, allowlisted bucket sizes, 2000-bucket cap, gaps left as gaps) are done; alarms, user admin, logging are next.
 - `packages/sparkplug/` **[exists]**: shared Sparkplug B library. `sparkplug_b.proto` is a subset of the official schema (same field numbers); `sparkplug_b_pb2.py/.pyi` are generated and committed. Regenerate with `docker run --rm -v "$PWD/sparkplug:/out" python:3.13-slim sh -c "pip install -q grpcio-tools && python -m grpc_tools.protoc -I/out --python_out=/out --pyi_out=/out /out/sparkplug_b.proto"` and keep the `protobuf>=` pin at or above the generator version. API: `Topic.parse/str`, `encode`, `decode`, `Metric`, `MessageType`, `DataType`.
 - `apps/simulator/` **[exists]**: edge node `edge1` (group `BuffaloWorks`) with devices `laser1`, `press1`, `printer1`. `edge_node.py` builds messages (pure, tested); `main.py` does MQTT I/O (aiomqtt): NBIRTH/DBIRTH, DDATA every `INTERVAL_S`, NDEATH as Last Will, rebirth on `NCMD Node Control/Rebirth`, reconnect with backoff and bdSeq bump. Conventions: aliases are `(device_index+1)*100 + metric_index`; DBIRTH carries `Properties/AssetType` and `Properties/Unit/<metric>` string metrics. Env: `MQTT_HOST`, `MQTT_PORT`, `INTERVAL_S`, `SPIKE_PROB`, `SEED`, `GROUP_ID`, `EDGE_NODE_ID`.
-- `apps/ingestor/` **[planned, next]**: subscribes `spBv1.0/#`, learns aliases from DBIRTH (upserts Asset/Tag), buffers DDATA into bulk `ON CONFLICT DO NOTHING` inserts, detects seq gaps and requests rebirth, evaluates alarm rules, republishes normalized JSON for the live feed.
+- `apps/ingestor/` **[exists]**: one MQTT subscription to `spBv1.0/#` (ADR 0004). `state.py` is the pure Sparkplug state machine (bdSeq session tracking, seq gaps, alias maps, stale NDEATH ignored); `registry.py` upserts Asset/Tags from DBIRTH; `writer.py` is a bounded buffer (`deque(maxlen)`, drops oldest) with bulk `ON CONFLICT DO NOTHING` flushes and edge-triggered alarm open/clear (alarm state snapshot restored if a flush fails); `main.py` handles MQTT, rate-limited rebirth requests (NCMD), live republish to `ia/v1/live/{tag_id}` and `ia/v1/alarms` (JSON), signal-driven graceful shutdown. Env: `DATABASE_URL`, `MQTT_HOST`, `MQTT_PORT`, `FLUSH_INTERVAL_S`, `RULE_REFRESH_S`. Imports models from the API package; `app/base.py` holds `Base` so that works without `JWT_SECRET`.
 - `apps/web/` **[planned]**: React + TypeScript + Vite, Vitest + Testing Library.
 - `deploy/` **[exists]**: `docker-compose.yml` with `db` (TimescaleDB) and `mqtt` (Mosquitto, config in `deploy/mosquitto/`, anonymous on 1883 for dev only). App services to be added.
-- `docs/` **[exists]**: `docs/adr/` holds decision records (0001 monorepo, 0002 TimescaleDB, 0003 Sparkplug B).
-- `.github/workflows/` **[exists]**: `api-ci.yml` (ruff, mypy, migration round trip, pytest against a TimescaleDB service container) and `python-libs-ci.yml` (matrix over `packages/sparkplug` and `apps/simulator`). Both path-filtered. Web CI and image builds planned.
+- `docs/` **[exists]**: `docs/adr/` holds decision records (0001 monorepo, 0002 TimescaleDB, 0003 Sparkplug B, 0004 separate ingestor).
+- `.github/workflows/` **[exists]**: `api-ci.yml` (ruff, mypy, migration round trip, pytest against a TimescaleDB service container) `python-libs-ci.yml` (matrix over `packages/sparkplug` and `apps/simulator`), and `ingestor-ci.yml` (Postgres service). Both path-filtered. Web CI and image builds planned.
 - `.gitignore`, `.editorconfig`, `README.md` **[exists]**.
 
 ## Roadmap
@@ -39,7 +39,7 @@ Status key: **[exists]** in the repo now, **[planned]** not built yet. Update th
 **Deadline: the interview is Monday 2026-11-09.** On Saturday 2026-11-07 the user chose "end-to-end demo first" with lighter teaching (key concepts, a walkthrough, one quiz per phase). Remaining work, one PR each, in order:
 
 1. Mosquitto + Sparkplug B library + simulator **[done in PR 7]**
-2. Ingestor: MQTT to DB, alias map from births, seq-gap rebirth, alarm evaluation
+2. Ingestor: MQTT to DB, alias map from births, seq-gap rebirth, alarm evaluation **[done in PR 8]**
 3. WebSocket live feed in the API
 4. React/TS dashboard: login, assets, live chart, aggregates, alarms
 5. Dockerfiles for every service, full-stack `docker compose up`, CI builds images
@@ -72,6 +72,9 @@ TEST_DATABASE_URL=postgresql+asyncpg://... .venv/bin/pytest              # again
 ```
 
 Gotchas:
+- Python monorepo siblings are installed editable with `--config-settings editable_mode=compat` (e.g. `pip install -e ../../packages/sparkplug -e ../api --config-settings editable_mode=compat`), otherwise mypy can't see them. `apps/api/app/py.typed` marks the API package as typed.
+- Ingestor integration tests need `TEST_DATABASE_URL` (Postgres); they `drop_all`/`create_all`, so never point it at the dev DB.
+- Local end-to-end run: `docker compose -f deploy/docker-compose.yml up -d`, `alembic upgrade head` (from apps/api), then `apps/simulator/.venv/bin/industrial-simulator` and `apps/ingestor/.venv/bin/industrial-ingestor`. Start order doesn't matter: a late ingestor requests a rebirth. Alarm rules have no API yet; insert into `alarm_rules` with SQL.
 - Tests for TimescaleDB-only SQL (`time_bucket`) are marked skip-on-SQLite (`needs_timescale`); run them with `TEST_DATABASE_URL` pointing at the Postgres test DB (it inherits the extension from template1).
 - Test fixtures build tables with `create_all`, so `readings` is a plain table in local tests (a hypertable only in CI's first test, after migrations). Verify hypertable behaviour against the migrated dev DB.
 - Timestamps are UTC and must be timezone-aware on input (`AwareDatetime`); SQLite drops tz info, so `ReadingOut` re-attaches UTC.

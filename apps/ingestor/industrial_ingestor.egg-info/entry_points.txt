@@ -1,0 +1,2 @@
+[console_scripts]
+industrial-ingestor = ingestor.main:run
