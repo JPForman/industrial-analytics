@@ -1,4 +1,4 @@
-# Local development stack. More services (mosquitto, ingestor, simulator, web) arrive in later phases.
+# Local development stack. More services (ingestor, api, web) arrive in later PRs.
 services:
   db:
     image: timescale/timescaledb:latest-pg16
@@ -16,5 +16,14 @@ services:
       timeout: 3s
       retries: 10
 
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqttdata:/mosquitto/data
+
 volumes:
   dbdata:
+  mqttdata:

@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: sparkplug
+Version: 0.1.0
+Summary: Minimal Sparkplug B helpers shared by the simulator and ingestor
+Requires-Python: >=3.14
+Requires-Dist: protobuf>=7.35.1
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: ruff>=0.8; extra == "dev"
+Requires-Dist: mypy>=1.13; extra == "dev"

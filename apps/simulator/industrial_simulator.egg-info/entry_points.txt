@@ -1,0 +1,2 @@
+[console_scripts]
+industrial-simulator = simulator.main:run

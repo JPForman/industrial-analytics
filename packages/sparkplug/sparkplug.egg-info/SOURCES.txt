@@ -1,0 +1,12 @@
+pyproject.toml
+sparkplug/__init__.py
+sparkplug/py.typed
+sparkplug/sparkplug_b.proto
+sparkplug/sparkplug_b_pb2.py
+sparkplug/sparkplug_b_pb2.pyi
+sparkplug.egg-info/PKG-INFO
+sparkplug.egg-info/SOURCES.txt
+sparkplug.egg-info/dependency_links.txt
+sparkplug.egg-info/requires.txt
+sparkplug.egg-info/top_level.txt
+tests/test_sparkplug.py

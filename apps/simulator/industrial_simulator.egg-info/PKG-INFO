@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: industrial-simulator
+Version: 0.1.0
+Summary: Simulated shop-floor machines publishing Sparkplug B over MQTT
+Requires-Python: >=3.14
+Requires-Dist: aiomqtt>=2.3
+Requires-Dist: sparkplug
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+Requires-Dist: ruff>=0.8; extra == "dev"
+Requires-Dist: mypy>=1.13; extra == "dev"
