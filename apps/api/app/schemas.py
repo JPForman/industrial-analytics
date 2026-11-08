@@ -3,7 +3,7 @@ from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import AssetType, BatchStatus, Role
+from app.models import AlarmOperator, AssetType, BatchStatus, Role, Severity
 
 
 class SignupRequest(BaseModel):
@@ -158,3 +158,34 @@ class AggregateBucket(BaseModel):
     @classmethod
     def _assume_utc(cls, v: datetime) -> datetime:
         return v if v.tzinfo else v.replace(tzinfo=UTC)
+
+
+class AlarmState(StrEnum):
+    active = "active"  # not cleared yet: the condition is still present
+    unacknowledged = "unacknowledged"  # nobody has taken ownership (active or cleared)
+    all = "all"
+
+
+class AlarmOut(BaseModel):
+    """An alarm event flattened with its rule, tag and asset, so the UI needs one request."""
+
+    id: int
+    rule_id: int
+    tag_id: int
+    tag_name: str
+    unit: str
+    asset_id: int
+    asset_name: str
+    operator: AlarmOperator
+    threshold: float
+    severity: Severity
+    value: float
+    triggered_at: datetime
+    cleared_at: datetime | None
+    acknowledged_at: datetime | None
+    acknowledged_by_id: int | None
+
+    @field_validator("triggered_at", "cleared_at", "acknowledged_at")
+    @classmethod
+    def _assume_utc(cls, v: datetime | None) -> datetime | None:
+        return v if v is None or v.tzinfo else v.replace(tzinfo=UTC)

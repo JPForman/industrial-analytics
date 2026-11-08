@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.deps import DbSession
 from app.live import broadcaster
 from app.mqtt_bridge import run_bridge
-from app.routers import assets, auth, batches, live, readings
+from app.routers import alarms, assets, auth, batches, live, readings
 
 
 @asynccontextmanager
@@ -31,6 +31,7 @@ app.include_router(auth.router)
 app.include_router(assets.router)
 app.include_router(batches.router)
 app.include_router(readings.router)
+app.include_router(alarms.router)
 app.include_router(live.router)
 
 
