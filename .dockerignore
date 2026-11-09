@@ -1,0 +1,19 @@
+# Build context is the repo root (monorepo siblings). Keep it small and secret-free.
+**/.env
+**/.env.*
+!**/.env.example
+**/.venv
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/node_modules
+**/dist
+**/tests
+**/*.test.ts
+**/*.test.tsx
+.git
+.github
+docs
+*.ipynb
