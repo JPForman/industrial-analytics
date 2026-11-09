@@ -24,13 +24,13 @@ React (Vite/TS) <---------- REST + WebSocket ---------- FastAPI api
 
 Status key: **[exists]** in the repo now, **[planned]** not built yet. Update this as phases land.
 
-- `apps/api/` **[exists]**: FastAPI, SQLAlchemy 2.0 async, Alembic, pytest. Auth + RBAC (`app/deps.py`: `get_current_user`, `require_role`), domain models, and the assets/tags router (`app/routers/assets.py`, shared helpers in `routers/common.py`: `Page`, `PageParams`, `commit_or_409`, `get_or_404`) and the batches router (`app/routers/batches.py`: start / complete / abort state machine) and the readings router (`app/routers/readings.py`: idempotent bulk ingest via ON CONFLICT DO NOTHING; keyset-paginated range query with required start/end) and the aggregate endpoint (`GET /tags/{id}/readings/aggregate`: TimescaleDB `time_bucket`, allowlisted bucket sizes, 2000-bucket cap, gaps left as gaps) are done; alarms, user admin, logging are next.
+- `apps/api/` **[exists]**: FastAPI, SQLAlchemy 2.0 async, Alembic, pytest. Auth + RBAC (`app/deps.py`: `get_current_user`, `require_role`), domain models, and the assets/tags router (`app/routers/assets.py`, shared helpers in `routers/common.py`: `Page`, `PageParams`, `commit_or_409`, `get_or_404`) and the batches router (`app/routers/batches.py`: start / complete / abort state machine) and the readings router (`app/routers/readings.py`: idempotent bulk ingest via ON CONFLICT DO NOTHING; keyset-paginated range query with required start/end) and the aggregate endpoint (`GET /tags/{id}/readings/aggregate`: TimescaleDB `time_bucket`, allowlisted bucket sizes, 2000-bucket cap, gaps left as gaps) and the live feed (ADR 0005: `app/mqtt_bridge.py` subscribes to the ingestor's `ia/v1/live/#` + `ia/v1/alarms` and runs from the FastAPI `lifespan`; `app/live.py` `Broadcaster` gives each client a bounded queue that drops oldest; `app/routers/live.py` `WS /ws/live?token=<jwt>&tag_id=N`, rejected before accept on a bad token; events are `{type: reading|alarm, ...}`) are done. Env adds `MQTT_HOST`, `MQTT_PORT`, `LIVE_BRIDGE_ENABLED`. No alarms REST endpoint yet (the dashboard needs `GET /alarms` for open/recent events); user admin and logging are deferred.
 - `packages/sparkplug/` **[exists]**: shared Sparkplug B library. `sparkplug_b.proto` is a subset of the official schema (same field numbers); `sparkplug_b_pb2.py/.pyi` are generated and committed. Regenerate with `docker run --rm -v "$PWD/sparkplug:/out" python:3.13-slim sh -c "pip install -q grpcio-tools && python -m grpc_tools.protoc -I/out --python_out=/out --pyi_out=/out /out/sparkplug_b.proto"` and keep the `protobuf>=` pin at or above the generator version. API: `Topic.parse/str`, `encode`, `decode`, `Metric`, `MessageType`, `DataType`.
 - `apps/simulator/` **[exists]**: edge node `edge1` (group `BuffaloWorks`) with devices `laser1`, `press1`, `printer1`. `edge_node.py` builds messages (pure, tested); `main.py` does MQTT I/O (aiomqtt): NBIRTH/DBIRTH, DDATA every `INTERVAL_S`, NDEATH as Last Will, rebirth on `NCMD Node Control/Rebirth`, reconnect with backoff and bdSeq bump. Conventions: aliases are `(device_index+1)*100 + metric_index`; DBIRTH carries `Properties/AssetType` and `Properties/Unit/<metric>` string metrics. Env: `MQTT_HOST`, `MQTT_PORT`, `INTERVAL_S`, `SPIKE_PROB`, `SEED`, `GROUP_ID`, `EDGE_NODE_ID`.
 - `apps/ingestor/` **[exists]**: one MQTT subscription to `spBv1.0/#` (ADR 0004). `state.py` is the pure Sparkplug state machine (bdSeq session tracking, seq gaps, alias maps, stale NDEATH ignored); `registry.py` upserts Asset/Tags from DBIRTH; `writer.py` is a bounded buffer (`deque(maxlen)`, drops oldest) with bulk `ON CONFLICT DO NOTHING` flushes and edge-triggered alarm open/clear (alarm state snapshot restored if a flush fails); `main.py` handles MQTT, rate-limited rebirth requests (NCMD), live republish to `ia/v1/live/{tag_id}` and `ia/v1/alarms` (JSON), signal-driven graceful shutdown. Env: `DATABASE_URL`, `MQTT_HOST`, `MQTT_PORT`, `FLUSH_INTERVAL_S`, `RULE_REFRESH_S`. Imports models from the API package; `app/base.py` holds `Base` so that works without `JWT_SECRET`.
 - `apps/web/` **[planned]**: React + TypeScript + Vite, Vitest + Testing Library.
 - `deploy/` **[exists]**: `docker-compose.yml` with `db` (TimescaleDB) and `mqtt` (Mosquitto, config in `deploy/mosquitto/`, anonymous on 1883 for dev only). App services to be added.
-- `docs/` **[exists]**: `docs/adr/` holds decision records (0001 monorepo, 0002 TimescaleDB, 0003 Sparkplug B, 0004 separate ingestor).
+- `docs/` **[exists]**: `docs/adr/` holds decision records (0001 monorepo, 0002 TimescaleDB, 0003 Sparkplug B, 0004 separate ingestor, 0005 WebSocket live feed).
 - `.github/workflows/` **[exists]**: `api-ci.yml` (ruff, mypy, migration round trip, pytest against a TimescaleDB service container) `python-libs-ci.yml` (matrix over `packages/sparkplug` and `apps/simulator`), and `ingestor-ci.yml` (Postgres service). Both path-filtered. Web CI and image builds planned.
 - `.gitignore`, `.editorconfig`, `README.md` **[exists]**.
 
@@ -40,14 +40,23 @@ Status key: **[exists]** in the repo now, **[planned]** not built yet. Update th
 
 1. Mosquitto + Sparkplug B library + simulator **[done in PR 7]**
 2. Ingestor: MQTT to DB, alias map from births, seq-gap rebirth, alarm evaluation **[done in PR 8]**
-3. WebSocket live feed in the API
+3. WebSocket live feed in the API **[done in PR 9]**
 4. React/TS dashboard: login, assets, live chart, aggregates, alarms
 5. Dockerfiles for every service, full-stack `docker compose up`, CI builds images
 6. README with architecture diagram, plus an interview talking-points doc
 
 Deliberately deferred (explain these, don't build them before Monday): alarm-rule CRUD UI, admin user-role endpoint, structured logging, Kubernetes manifests, GHCR publishing, pre-commit, branch protection (needs GitHub Pro on a private repo).
 
-Already done: repo bootstrap; API scaffold, auth/RBAC, Alembic, domain models (hypertable), assets/tags, batches (with race-safe finish), readings ingest + keyset query, `time_bucket` aggregates.
+### Current state (handoff, updated 2026-11-07 night)
+
+- #7 is merged. **#8** `feat/ingestor` was rebased onto main and now targets `main`. **PR 9** `feat/live-feed` is **stacked on #8** (base `feat/ingestor`). Once #8 is squash-merged: `git fetch && git rebase --onto origin/main feat/ingestor feat/live-feed`, `git push --force-with-lease`, `gh pr edit <9> --base main`. Ask the user before merging.
+- Next to build: **PR 10, the React dashboard** (`apps/web`). It needs a small `GET /alarms` endpoint (open + recent events) first, either in PR 10 or as its own PR. Live data: open `WS /ws/live?token=`, then backfill over REST on connect and reconnect (the feed is best-effort, see ADR 0005).
+- The **Phase 3 quiz** (MQTT/Sparkplug, ingestor, WebSocket) is owed now. Good topics: why seq gaps trigger a rebirth, why alarms are edge-triggered, why the buffer is bounded and drops the oldest rows, why alarm state is snapshotted around a flush, why WebSocket tokens go in the query string (and the access-log cost), and why the WS handler closes its DB session right away.
+- Testing gotcha: WebSocket tests use `httpx-ws` (`ASGIWebSocketTransport`). Open the client inside each test, not in a yield fixture (an anyio task group must exit in the task that entered it). A pre-accept close shows up as `WebSocketDisconnect(1008)` wrapped in an ExceptionGroup, not as HTTP 403.
+- Dev DB (local `industrial`) contains demo user `demo@example.com` / `demo-password-1` (engineer), assets from the simulator (`edge1`: laser1, press1, printer1), and alarm rule 1 (laser1 `power_w` > 1500, critical). The test DB is `industrial_test`. Don't read `.env` files: the user denied that.
+- Docker containers `deploy-db-1` and `deploy-mqtt-1` should be running (`docker compose -f deploy/docker-compose.yml up -d` if not).
+
+Already done: repo bootstrap; API scaffold, auth/RBAC, Alembic, domain models (hypertable), assets/tags, batches (with race-safe finish), readings ingest + keyset query, `time_bucket` aggregates, MQTT + simulator (#7), ingestor (#8), WebSocket live feed (PR 9).
 
 ## Domain model (implemented in `apps/api/app/models.py`)
 
