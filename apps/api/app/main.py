@@ -5,11 +5,15 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, HTTPException, status
 from sqlalchemy import text
 
+from app import log_redaction
 from app.core.config import get_settings
 from app.deps import DbSession
 from app.live import broadcaster
 from app.mqtt_bridge import run_bridge
 from app.routers import alarms, assets, auth, batches, live, readings
+
+# At import: uvicorn has already configured its loggers by the time it imports the app.
+log_redaction.install()
 
 
 @asynccontextmanager

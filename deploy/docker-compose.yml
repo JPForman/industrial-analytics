@@ -1,10 +1,28 @@
-# Local development stack. More services (ingestor, api, web) arrive in later PRs.
+# Easiest: `make up` from the repo root (creates deploy/.env with a JWT_SECRET once, then runs:)
+#   docker compose -f deploy/docker-compose.yml up -d --build
+# then open http://localhost:8080 (dashboard) or http://localhost:8000/docs (API).
+# Infra only, for running the apps from source: `make infra` (= up -d db mqtt).
+# JWT_SECRET comes from the shell or deploy/.env (compose reads .env next to this file).
+#
+# Startup order is enforced with healthchecks, not sleeps:
+#   db (healthy) -> migrate (completed) -> api (healthy) -> web
+#   db + mqtt (healthy) + migrate -> ingestor;  mqtt (healthy) -> simulator
+
+x-db-url: &db-url postgresql+asyncpg://industrial:industrial@db:5432/industrial
+
+x-python-app: &python-app
+  restart: unless-stopped
+  environment: &python-env
+    DATABASE_URL: *db-url
+    MQTT_HOST: mqtt
+    MQTT_PORT: "1883"
+
 services:
   db:
     image: timescale/timescaledb:latest-pg16
     environment:
       POSTGRES_USER: industrial
-      POSTGRES_PASSWORD: industrial
+      POSTGRES_PASSWORD: industrial # dev only; real deployments inject secrets
       POSTGRES_DB: industrial
     ports:
       - "5432:5432"
@@ -23,6 +41,71 @@ services:
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mqttdata:/mosquitto/data
+    healthcheck:
+      # $$ escapes compose interpolation. $SYS topics are retained, so this returns at once.
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/broker/version", "-C", "1", "-W", "3"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: apply migrations, then exit 0. Running them here (not on API startup) means
+  # several API replicas never race each other to migrate.
+  migrate:
+    build: { context: .., dockerfile: apps/api/Dockerfile }
+    image: industrial-api:dev
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *db-url
+      JWT_SECRET: ${JWT_SECRET:-} # empty -> the API's Settings refuses to start
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    image: industrial-api:dev
+    restart: unless-stopped
+    environment:
+      <<: *python-env
+      JWT_SECRET: ${JWT_SECRET:-} # empty -> the API's Settings refuses to start
+      LIVE_BRIDGE_ENABLED: "true"
+    ports:
+      - "8000:8000" # Swagger at /docs; the dashboard itself goes through web
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      mqtt: { condition: service_healthy }
+    healthcheck:
+      # Readiness, not liveness: /ready checks the DB. The slim image has no curl, so use Python.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  ingestor:
+    <<: *python-app
+    build: { context: .., dockerfile: apps/ingestor/Dockerfile }
+    image: industrial-ingestor:dev
+    stop_grace_period: 15s # time to flush the buffer on SIGTERM
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      mqtt: { condition: service_healthy }
+
+  simulator:
+    <<: *python-app
+    build: { context: .., dockerfile: apps/simulator/Dockerfile }
+    image: industrial-simulator:dev
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PORT: "1883"
+    depends_on:
+      mqtt: { condition: service_healthy }
+
+  web:
+    build: { context: .., dockerfile: apps/web/Dockerfile }
+    image: industrial-web:dev
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      api: { condition: service_healthy }
 
 volumes:
   dbdata:
