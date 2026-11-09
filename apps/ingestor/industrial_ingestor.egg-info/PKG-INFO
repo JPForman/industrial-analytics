@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: industrial-ingestor
+Version: 0.1.0
+Summary: Consumes Sparkplug B from MQTT, writes readings to TimescaleDB, evaluates alarms
+Requires-Python: >=3.14
+Requires-Dist: aiomqtt>=2.3
+Requires-Dist: sqlalchemy[asyncio]>=2.0.36
+Requires-Dist: asyncpg>=0.30
+Requires-Dist: sparkplug
+Requires-Dist: industrial-api
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+Requires-Dist: ruff>=0.8; extra == "dev"
+Requires-Dist: mypy>=1.13; extra == "dev"

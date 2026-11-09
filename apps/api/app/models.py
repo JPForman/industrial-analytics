@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, Float, ForeignKey, Index, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db import Base
+from app.base import Base
 
 
 class Role(enum.StrEnum):
